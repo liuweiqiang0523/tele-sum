@@ -1,0 +1,21 @@
+{
+  "telegram": {
+    "apiId": 123456,
+    "apiHash": "your_api_hash",
+    "session": "",
+    "selfCommandsOnly": true
+  },
+  "sum": {
+    "type": "openai",
+    "name": "Sub2API",
+    "baseUrl": "https://your-sub2api.example/v1",
+    "apiKey": "sk-your-key",
+    "model": "gpt-5.5",
+    "stream": false,
+    "prompt": "",
+    "maxOutputLength": 2400,
+    "replyMode": true,
+    "fallbacks": []
+  }
+}
+

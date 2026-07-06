@@ -35,7 +35,46 @@ The installer copies:
 
 It does not overwrite `assets/sum/config.json`.
 
-## Configure
+## Standalone Userbot
+
+This mode runs SumPlus without installing TeleBox.
+
+```bash
+git clone https://github.com/liuweiqiang0523/tele-sum.git
+cd tele-sum
+npm install
+cp config.example.json config.json
+nano config.json
+npm start
+```
+
+Required `config.json` fields:
+
+- `telegram.apiId`
+- `telegram.apiHash`
+- `telegram.session`, optional on first run
+- `sum.baseUrl`
+- `sum.apiKey`
+- `sum.model`
+
+On first run, the app asks for phone number, verification code and 2FA password if needed. It saves the Telegram session back to `config.json`.
+
+By default, standalone mode only handles commands sent by yourself:
+
+```json
+"selfCommandsOnly": true
+```
+
+Set it to `false` only if you intentionally want other group members to trigger `.sum`.
+
+Useful PM2 example:
+
+```bash
+pm2 start npm --name tele-sum -- start
+pm2 save
+```
+
+## Configure TeleBox Plugin
 
 In Telegram:
 
@@ -50,6 +89,8 @@ In Telegram:
 For provider fallback, edit TeleBox's `assets/sum/config.json` and use `fallbacks`.
 
 See `assets/sum/config.example.json`.
+
+For standalone mode, edit the root `config.json` directly.
 
 ## Commands
 
@@ -77,7 +118,7 @@ The short version:
 
 ## Current Scope
 
-This repository is currently the TeleBox plugin version.
+This repository now supports two deployment modes:
 
-The later goal is a standalone userbot version that can run without installing the full TeleBox project.
-
+- TeleBox plugin mode: most polished formatting and live `.sum key/url/model` configuration commands.
+- Standalone userbot mode: minimal deployable version that runs without the full TeleBox project.

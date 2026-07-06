@@ -1,0 +1,24 @@
+{
+  "name": "tele-sum",
+  "version": "0.1.0",
+  "private": false,
+  "type": "commonjs",
+  "scripts": {
+    "start": "tsx src/standalone.ts",
+    "check": "tsc --noEmit --pretty false"
+  },
+  "dependencies": {
+    "axios": "^1.11.0",
+    "dotenv": "^17.2.2",
+    "teleproto": "^1.227.1"
+  },
+  "devDependencies": {
+    "@types/node": "^24.3.0",
+    "tsx": "^4.22.4",
+    "typescript": "^5.9.2"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
+
