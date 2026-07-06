@@ -1,0 +1,22 @@
+{
+  "type": "openai",
+  "name": "Sub2API",
+  "baseUrl": "https://your-sub2api.example/v1",
+  "apiKey": "sk-your-key",
+  "model": "gpt-5.5",
+  "stream": false,
+  "prompt": "",
+  "maxOutputLength": 2400,
+  "replyMode": true,
+  "fallbacks": [
+    {
+      "name": "Fallback",
+      "type": "openai",
+      "baseUrl": "https://your-fallback.example/v1",
+      "apiKey": "sk-your-fallback-key",
+      "model": "deepseek-v4-flash",
+      "stream": false
+    }
+  ]
+}
+
