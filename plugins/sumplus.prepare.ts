@@ -827,6 +827,8 @@ function prepareCpInput(records: ChatMessageRecord[]): PreparedInput {
       "",
       ...buildRelationStats(records, pairLimit, mentionLimit),
       "",
+      ...buildRepeatStats(records, 6),
+      "",
       ...buildQuoteCandidateLines(records).slice(0, quoteLimit),
       "",
       "代表性消息：",
@@ -860,6 +862,8 @@ function prepareMemeInput(records: ChatMessageRecord[]): PreparedInput {
     lines: [
       ...buildMemeStats(records),
       "",
+      ...buildRepeatStats(records, 8),
+      "",
       ...buildQuoteCandidateLines(records).slice(0, 80),
       "",
       "代表性消息：",
@@ -881,6 +885,8 @@ function prepareRoastInput(records: ChatMessageRecord[]): PreparedInput {
       "",
       ...buildMemeStats(records),
       "",
+      ...buildRepeatStats(records, 8),
+      "",
       ...buildQuoteCandidateLines(records).slice(0, 80),
       "",
       "代表性消息：",
@@ -895,6 +901,8 @@ function prepareRelationInput(records: ChatMessageRecord[]): PreparedInput {
   return {
     lines: [
       ...buildRelationStats(records),
+      "",
+      ...buildRepeatStats(records, 6),
       "",
       ...buildRankStats(records),
       "",
@@ -911,6 +919,8 @@ function prepareQuotesInput(records: ChatMessageRecord[]): PreparedInput {
   return {
     lines: [
       ...quoteLines,
+      "",
+      ...buildRepeatStats(records, 6),
       "",
       "代表性消息：",
       ...sampled.lines.slice(0, 100),
@@ -954,6 +964,8 @@ function prepareRankInput(records: ChatMessageRecord[]): PreparedInput {
     lines: [
       ...buildRankStats(records),
       ...buildUserTitleHints(records),
+      "",
+      ...buildRepeatStats(records, 6),
       "",
       "代表性消息：",
       ...sampled.lines.slice(0, 140),
@@ -1031,6 +1043,29 @@ export function prepareKeywordInput(records: ChatMessageRecord[], keyword: strin
   };
 }
 
+function prepareGeneralModeInput(records: ChatMessageRecord[], mode: SumMode): PreparedInput {
+  const sampled = prepareSummaryInput(records);
+  const localStats = buildLocalSummaryStats(records, sampled);
+  const quoteLimit = records.length >= 500 ? 80 : records.length >= 120 ? 60 : 35;
+  const sampleLimit = records.length >= 500 ? 150 : records.length >= 120 ? 120 : 80;
+  const lines = [
+    `模式提示：${mode} 模式需要结合本地统计、复读/刷屏候选、金句候选和代表性消息判断重点。`,
+    "",
+    ...localStats,
+    "",
+    ...buildMemeStats(records),
+    "",
+    ...buildQuoteCandidateLines(records).slice(0, quoteLimit),
+    "",
+    "代表性消息：",
+    ...sampled.lines.slice(0, sampleLimit),
+  ];
+  return {
+    lines,
+    note: `已为 ${mode} 模式整理本地统计、复读/刷屏候选、热词、金句和代表性消息`,
+  };
+}
+
 export function prepareSpecialInput(mode: SumMode, records: ChatMessageRecord[], keyword?: string): PreparedInput {
   if (mode === "rank") return prepareRankInput(records);
   if (mode === "links") return prepareLinksInput(records);
@@ -1042,5 +1077,5 @@ export function prepareSpecialInput(mode: SumMode, records: ChatMessageRecord[],
   if (mode === "cp") return prepareCpInput(records);
   if (mode === "award" || mode === "npc") return prepareRankInput(records);
   if (mode === "abstract" || mode === "mood") return prepareMemeInput(records);
-  return prepareSummaryInput(records);
+  return prepareGeneralModeInput(records, mode);
 }
