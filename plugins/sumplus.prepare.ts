@@ -630,6 +630,7 @@ export function buildLocalSummaryStats(records: ChatMessageRecord[], prepared: P
     `活跃时段 TOP：${activeHours.length ? activeHours.join("；") : "无"}`,
     `核心用户 TOP：${topUsers.map((user) => `${user.sender} ${user.count} 条`).join("；") || "无"}`,
     `链接数：${linkCount}；疑问句/问题数：${questionCount}`,
+    ...buildRepeatStats(sorted, 6),
     ...buildUserTitleHints(sorted),
   ];
 }
@@ -661,6 +662,56 @@ function buildUserTitleHints(records: ChatMessageRecord[], limit = 5): string[] 
     });
 
   return hints.length ? ["称号库提示：", ...hints] : [];
+}
+
+function normalizeRepeatContent(content: string): string {
+  const text = content
+    .replace(URL_PATTERN, " ")
+    .replace(/\[[^\]]+\]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!text || text.length < 2 || text.length > 40) return "";
+  if (isQuestion(text)) return "";
+  if (/^[\p{Emoji_Presentation}\p{Extended_Pictographic}\s]+$/u.test(text)) return "";
+  return text;
+}
+
+function buildRepeatStats(records: ChatMessageRecord[], limit = 6): string[] {
+  const counts = new Map<string, { text: string; count: number; users: Set<string>; first: number; last: number }>();
+  for (const record of records) {
+    const text = normalizeRepeatContent(record.content);
+    if (!text) continue;
+    const key = text.toLowerCase();
+    const item = counts.get(key) || {
+      text,
+      count: 0,
+      users: new Set<string>(),
+      first: record.timestamp,
+      last: record.timestamp,
+    };
+    item.count += 1;
+    item.users.add(record.sender);
+    item.first = Math.min(item.first, record.timestamp);
+    item.last = Math.max(item.last, record.timestamp);
+    counts.set(key, item);
+  }
+
+  const repeated = [...counts.values()]
+    .filter((item) => item.count >= 3 || (item.count >= 2 && item.users.size >= 2))
+    .sort((a, b) => b.count - a.count || b.users.size - a.users.size)
+    .slice(0, limit)
+    .map((item) => {
+      const users = [...item.users].slice(0, 4).join("、");
+      const timeRange = item.first === item.last
+        ? formatDate(new Date(item.first * 1000))
+        : `${formatDate(new Date(item.first * 1000))} 至 ${formatDate(new Date(item.last * 1000))}`;
+      return `「${item.text}」：${item.count} 次｜${item.users.size} 人｜用户：${users}｜时间：${timeRange}`;
+    });
+
+  return [
+    "复读/刷屏候选：",
+    ...(repeated.length ? repeated : ["无明显复读/刷屏"]),
+  ];
 }
 
 function buildMemeStats(records: ChatMessageRecord[]): string[] {
