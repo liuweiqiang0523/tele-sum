@@ -441,24 +441,24 @@ function getDensity(records: ChatMessageRecord[], mode: SumMode): SummaryDensity
   if (count >= 900) {
     return {
       label: "长消息模式",
-      targetLength: isEntertainment ? "约 900-1400 中文字" : "约 1000-1600 中文字",
-      topicLimit: 6,
+      targetLength: isEntertainment ? "约 900-1300 中文字" : "约 1300-1800 中文字",
+      topicLimit: isEntertainment ? 5 : 5,
       pointLimit: 2,
       highlightLimit: 4,
-      quoteLimit: 5,
-      todoLimit: 5,
+      quoteLimit: 3,
+      todoLimit: 3,
       maxOutputLength: 2600,
     };
   }
   return {
     label: "标准模式",
-    targetLength: isEntertainment ? "约 650-1000 中文字" : "约 700-1200 中文字",
-    topicLimit: count >= 500 ? 5 : 4,
+    targetLength: isEntertainment ? "约 650-1000 中文字" : count >= 500 ? "约 900-1300 中文字" : "约 550-850 中文字",
+    topicLimit: isEntertainment ? (count >= 500 ? 4 : 3) : count >= 500 ? 4 : 3,
     pointLimit: 2,
     highlightLimit: 3,
-    quoteLimit: 3,
-    todoLimit: 4,
-    maxOutputLength: 2200,
+    quoteLimit: 2,
+    todoLimit: 3,
+    maxOutputLength: count >= 500 ? 2000 : 1400,
   };
 }
 
@@ -635,7 +635,12 @@ async function handleSumCommand(client: TelegramClient, config: AppConfig, messa
   const systemPrompt = request.mode === "summary"
     ? buildSystemPrompt(config.sum.prompt)
     : buildModePrompt(request.mode === "person" || request.target ? "person" : request.mode, request.keyword);
-  const result = await summarize({ ...config.sum, prompt: systemPrompt }, userPrompt);
+  const density = getDensity(fetchResult.records, request.mode === "person" || request.target ? "person" : request.mode);
+  const result = await summarize({
+    ...config.sum,
+    prompt: systemPrompt,
+    maxOutputLength: Math.min(config.sum.maxOutputLength || density.maxOutputLength, density.maxOutputLength),
+  }, userPrompt);
   const text = `${result.content.trim()}\n${footerText(result.provider.name, result.provider.model, result.usage, fetchResult.records.length)}`;
   await sendText(client, peer, text, message.out ? message : undefined);
 }
