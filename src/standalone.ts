@@ -695,7 +695,7 @@ async function handleSumCommand(client: TelegramClient, config: AppConfig, messa
       const caption = [
         `🖼️ ${summaryImageTitle(request.mode, chatName, special?.title)}`,
         `🤖 ${result.provider.name}｜${result.provider.model}`,
-        `📥 ${fetchResult.records.length} 条｜${imageResult.pages.length} 页`,
+        `📥 ${fetchResult.records.length} 条｜单张长图`,
         `⚡ 排版 ${imageResult.renderMs}ms｜真实头像 ${imageResult.avatarCount} 个`,
       ].join("\n");
       await sendImageAlbum(client, peer, imageResult.pages, caption);
