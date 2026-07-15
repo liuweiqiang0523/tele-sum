@@ -559,16 +559,11 @@ async function sendText(client: TelegramClient, peer: unknown, text: string, edi
   }
 }
 
-async function sendImageAlbum(client: TelegramClient, peer: unknown, pages: Buffer[], caption: string): Promise<void> {
-  const files = pages.slice(0, 10).map((page, index) => {
-    const file = page as Buffer & { name?: string };
-    file.name = `sumplus-${Date.now()}-${index + 1}.png`;
-    return file;
-  });
-  if (!files.length) throw new Error("图片渲染结果为空");
-  await (client as any).sendFile(peer, files.length === 1
-    ? { file: files[0], caption, forceDocument: false }
-    : { file: files, caption: files.map((_file, index) => index === 0 ? caption : ""), forceDocument: false });
+async function sendImage(client: TelegramClient, peer: unknown, pages: Buffer[]): Promise<void> {
+  const file = pages[0] as (Buffer & { name?: string }) | undefined;
+  if (!file) throw new Error("图片渲染结果为空");
+  file.name = `sumplus-${Date.now()}.png`;
+  await (client as any).sendFile(peer, { file, forceDocument: false });
 }
 
 function summaryImageTitle(mode: SumMode, chatName: string, specialTitle?: string): string {
@@ -692,13 +687,7 @@ async function handleSumCommand(client: TelegramClient, config: AppConfig, messa
         providerName: result.provider.name,
         model: result.provider.model,
       });
-      const caption = [
-        `🖼️ ${summaryImageTitle(request.mode, chatName, special?.title)}`,
-        `🤖 ${result.provider.name}｜${result.provider.model}`,
-        `📥 ${fetchResult.records.length} 条｜单张长图`,
-        `⚡ 排版 ${imageResult.renderMs}ms｜真实头像 ${imageResult.avatarCount} 个`,
-      ].join("\n");
-      await sendImageAlbum(client, peer, imageResult.pages, caption);
+      await sendImage(client, peer, imageResult.pages);
       if (message.out) await message.delete({ revoke: true });
       return;
     } catch (error) {
