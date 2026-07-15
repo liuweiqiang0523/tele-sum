@@ -30,6 +30,7 @@ const DURATION_PAGE_SIZE = 100;
 const MAX_DURATION_FETCH_PAGES = 24;
 const MAX_DURATION_FETCH_MESSAGES = 2000;
 const COMMAND_PREFIXES = (process.env.TELE_SUM_PREFIXES || ".").split(/\s+/).filter(Boolean);
+const IMAGE_MODE_TOKENS = new Set(["pic", "image", "img", "图片", "海报"]);
 
 type TelegramConfig = {
   apiId: number;
@@ -234,6 +235,8 @@ function isSumSelfNoiseRecord(record: ChatMessageRecord): boolean {
   const content = record.content.trim().replace(/^#+\s*/, "");
   if (!content) return true;
   if (content.startsWith("⏳ 正在读取消息并生成摘要")) return true;
+  if (content.startsWith("⏳ 正在读取消息并生成图片摘要")) return true;
+  if (content.startsWith("🎨 正在获取头像并排版")) return true;
   if (content.startsWith("❌ 摘要失败")) return true;
   return [
     "📊 群聊消息摘要",
@@ -556,6 +559,35 @@ async function sendText(client: TelegramClient, peer: unknown, text: string, edi
   }
 }
 
+async function sendImageAlbum(client: TelegramClient, peer: unknown, pages: Buffer[], caption: string): Promise<void> {
+  const files = pages.slice(0, 10).map((page, index) => {
+    const file = page as Buffer & { name?: string };
+    file.name = `sumplus-${Date.now()}-${index + 1}.png`;
+    return file;
+  });
+  if (!files.length) throw new Error("图片渲染结果为空");
+  await (client as any).sendFile(peer, files.length === 1
+    ? { file: files[0], caption, forceDocument: false }
+    : { file: files, caption: files.map((_file, index) => index === 0 ? caption : ""), forceDocument: false });
+}
+
+function summaryImageTitle(mode: SumMode, chatName: string, specialTitle?: string): string {
+  if (mode === "summary") {
+    if (specialTitle === "群聊日报") return `📆 群聊日报｜${chatName}`;
+    if (specialTitle === "昨日群聊日报") return `📜 昨日群聊日报｜${chatName}`;
+    if (specialTitle === "群聊周报") return `🗓️ 群聊周报｜${chatName}`;
+    return `📊 群聊消息摘要｜${chatName}`;
+  }
+  const titles: Partial<Record<SumMode, string>> = {
+    hot: "🔥 群聊争议雷达", rank: "🏆 今日话唠榜", links: "🔗 链接资源整理", todo: "✅ 群聊待办清单",
+    catchup: "🧭 错过消息补课", vibe: "🎭 群聊小剧场", about: "🔎 关键词追踪", meme: "🧨 今日热梗榜",
+    relation: "🕸️ 人物关系网", story: "🎬 群聊剧情线", compare: "📈 昨日今日对比", track: "🛰️ 争议追踪",
+    quotes: "💬 金句收藏夹", melon: "🍉 今日吃瓜速报", roast: "😏 今日槽点日报", cp: "🍬 今日互动嗑糖榜",
+    abstract: "🌀 今日抽象指数", award: "🏆 群聊颁奖典礼", mood: "🌦️ 今日群聊天气", npc: "🧙 群友职业分配",
+  };
+  return `${titles[mode] || "📊 群聊消息摘要"}｜${chatName}`;
+}
+
 function helpText(): string {
   return [
     "# SumPlus Standalone",
@@ -566,6 +598,7 @@ function helpText(): string {
     ".sum day / yesterday / week",
     ".sum hot 6h / rank 24h / links 24h",
     ".sum cp 24h / npc 24h / roast 24h",
+    ".sum day pic - 图片版；其他命令也可在末尾加 pic",
     ".sum about AI 24h",
     ".sum user 24h 张三",
   ].join("\n");
@@ -574,7 +607,9 @@ function helpText(): string {
 async function handleSumCommand(client: TelegramClient, config: AppConfig, message: any, args: string[]): Promise<void> {
   const peer = message.inputChat || message.peerId || message.chatId;
   if (!peer) return;
-  const sub = args[0]?.toLowerCase() || "";
+  const imageMode = args.some((item) => IMAGE_MODE_TOKENS.has(item.toLowerCase()));
+  const effectiveArgs = imageMode ? args.filter((item) => !IMAGE_MODE_TOKENS.has(item.toLowerCase())) : args;
+  const sub = effectiveArgs[0]?.toLowerCase() || "";
   if (sub === "help" || sub === "menu") {
     await sendText(client, peer, helpText(), message.out ? message : undefined);
     return;
@@ -588,12 +623,12 @@ async function handleSumCommand(client: TelegramClient, config: AppConfig, messa
     return;
   }
 
-  await sendText(client, peer, "⏳ 正在读取消息并生成摘要...", message.out ? message : undefined);
+  await sendText(client, peer, imageMode ? "⏳ 正在读取消息并生成图片摘要..." : "⏳ 正在读取消息并生成摘要...", message.out ? message : undefined);
 
-  const special = parseSpecialRequest(sub, args.slice(1));
+  const special = parseSpecialRequest(sub, effectiveArgs.slice(1));
   const request = special
     ? { mode: special.mode, rangeToken: special.rangeToken, target: special.target || "", keyword: special.keyword || "" }
-    : { mode: "summary" as SumMode, ...parseSummaryRequest(args[0], args.slice(1)), keyword: "" };
+    : { mode: "summary" as SumMode, ...parseSummaryRequest(effectiveArgs[0], effectiveArgs.slice(1)), keyword: "" };
   const range = resolveRangeToken(request.rangeToken, special?.defaultRangeToken || "100");
   const chatName = await getChatName(client, peer);
   const fetchResult = await fetchByRange(client, peer, range);
@@ -642,6 +677,35 @@ async function handleSumCommand(client: TelegramClient, config: AppConfig, messa
     maxOutputLength: Math.min(config.sum.maxOutputLength || density.maxOutputLength, density.maxOutputLength),
   }, userPrompt);
   const text = `${result.content.trim()}\n${footerText(result.provider.name, result.provider.model, result.usage, fetchResult.records.length)}`;
+
+  if (imageMode) {
+    try {
+      await sendText(client, peer, "🎨 正在获取头像并排版...", message.out ? message : undefined);
+      const { renderSummaryImages } = await import("../plugins/sumplus.image");
+      const imageResult = await renderSummaryImages({
+        client,
+        chatName,
+        title: summaryImageTitle(request.mode, chatName, special?.title),
+        mode: request.mode,
+        summary: text,
+        records: fetchResult.records,
+        providerName: result.provider.name,
+        model: result.provider.model,
+      });
+      const caption = [
+        `🖼️ ${summaryImageTitle(request.mode, chatName, special?.title)}`,
+        `🤖 ${result.provider.name}｜${result.provider.model}`,
+        `📥 ${fetchResult.records.length} 条｜${imageResult.pages.length} 页`,
+        `⚡ 排版 ${imageResult.renderMs}ms｜真实头像 ${imageResult.avatarCount} 个`,
+      ].join("\n");
+      await sendImageAlbum(client, peer, imageResult.pages, caption);
+      if (message.out) await message.delete({ revoke: true });
+      return;
+    } catch (error) {
+      console.warn("image render failed, falling back to text:", error);
+    }
+  }
+
   await sendText(client, peer, text, message.out ? message : undefined);
 }
 

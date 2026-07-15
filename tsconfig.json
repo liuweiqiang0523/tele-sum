@@ -15,6 +15,7 @@
     "src/**/*",
     "plugins/sumplus.prepare.ts",
     "plugins/sumplus.provider.ts",
+    "plugins/sumplus.image.ts",
     "plugins/sumplus.prompts.ts",
     "plugins/sumplus.types.ts"
   ]

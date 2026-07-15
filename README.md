@@ -10,6 +10,7 @@ It keeps the Telegram command as `.sum`, but the plugin file is named `sumplus.t
 - Person analysis with local identity matching
 - Rank, links, todo, hot, vibe, meme, quotes, roast and CP modes
 - Telegram-friendly output formatting
+- Fast local PNG reports with cached Telegram profile photos
 - OpenAI-compatible and Gemini-compatible providers
 - Ordered fallback providers
 - Model and token usage footer
@@ -28,6 +29,7 @@ pm2 restart telebox --update-env
 The installer copies:
 
 - `plugins/sumplus.ts`
+- `plugins/sumplus.image.ts`
 - `plugins/sumplus.prepare.ts`
 - `plugins/sumplus.provider.ts`
 - `plugins/sumplus.prompts.ts`
@@ -114,7 +116,11 @@ The short version:
 .sum user 200 张三
 .sum cp 24h
 .sum npc 24h
+.sum day pic
+.sum roast 24h pic
 ```
+
+Append `pic` to any summary command to send a compact, shareable PNG report. Avatar photos are fetched from Telegram and cached locally; image rendering does not make another AI request.
 
 ## Current Scope
 

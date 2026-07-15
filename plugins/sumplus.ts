@@ -42,6 +42,8 @@ import {
 } from "./sumplus.prepare";
 const prefixes = getPrefixes();
 const mainPrefix = prefixes[0] || ".";
+const IMAGE_MODE_TOKENS = new Set(["pic", "image", "img", "图片", "海报"]);
+const MANAGEMENT_COMMANDS = new Set(["key", "url", "model", "type", "prompt", "max", "reply", "info", "help", "menu", "modes", "玩法", "菜单", "debug", "stat", "stats", "诊断"]);
 
 // Keep individual messages and total prompt size bounded while respecting the user's requested history range.
 // We do not cap the requested message count here; only oversized pasted messages/prompts are compacted.
@@ -147,9 +149,140 @@ function ensureHeadingHasChatName(text: string, chatName: string): string {
   return `# ${title}\n\n${text.trim()}`;
 }
 
+function normalizeSummaryCardText(text: string): string {
+  return text
+    .split(/\r?\n/)
+    .map((line) => {
+      const trimmed = line.trim();
+      if (/^-\s+/.test(trimmed)) return line.replace(/^(\s*)-\s+/, "$1• ");
+      return line;
+    })
+    .join("\n");
+}
+
+function normalizeSummaryHeadings(text: string): string {
+  return text
+    .split(/\r?\n/)
+    .map((line) => line.replace(/^(\s*)#{1,6}\s+/, "$1"))
+    .join("\n");
+}
+
+function normalizeMentionNameToken(value: string): string {
+  const raw = String(value || "").trim();
+  if (!raw || raw.startsWith("＠") || raw.startsWith("@")) return raw;
+  if (/^(约|无|未知|N\s*条|HH:mm)$/.test(raw) || /^\d{2}:\d{2}$/.test(raw)) return raw;
+  return `@${raw}`;
+}
+
+function normalizeMentionList(value: string): string {
+  return value
+    .split(/([、,，])/)
+    .map((part) => {
+      if (/^[、,，]$/.test(part)) return part;
+      const suffix = part.match(/\s*$/)?.[0] || "";
+      return `${normalizeMentionNameToken(part)}${suffix}`;
+    })
+    .join("");
+}
+
+function normalizeSummaryMentions(text: string): string {
+  return text
+    .split(/\r?\n/)
+    .map((line) => {
+      let next = line;
+      next = next.replace(/^(\s*(?:[•-]\s*)?👥\s*核心用户：)(.+)$/u, (_m, prefix, names) => `${prefix}${normalizeMentionList(names)}`);
+      next = next.replace(/^(\s*[👤👥]\s*(?:主要参与|参与用户|相关用户)：)(.+)$/u, (_m, prefix, names) => `${prefix}${normalizeMentionList(names)}`);
+      next = next.replace(/^(\s*(?:[•-]\s*)?[🥇🥈🥉]\s*)([^：\n]+)(：约\s*\d+\s*条｜称号：.+)$/u, (_m, prefix, name, suffix) => `${prefix}${normalizeMentionNameToken(name)}${suffix}`);
+      next = next.replace(/^(\s*(?:[•-]\s*)?🗣️\s*)([^：「\n]+)(：「.*)$/u, (_m, prefix, name, suffix) => `${prefix}${normalizeMentionNameToken(name)}${suffix}`);
+      return next;
+    })
+    .join("\n");
+}
+
+
+function titleForSummaryMode(mode: SumMode, chatName: string, specialTitle?: string): string {
+  if (mode === "summary") {
+    if (specialTitle === "群聊日报") return `📆 群聊日报｜${chatName}`;
+    if (specialTitle === "昨日群聊日报") return `📜 昨日群聊日报｜${chatName}`;
+    if (specialTitle === "群聊周报") return `🗓️ 群聊周报｜${chatName}`;
+    return `📊 群聊消息摘要｜${chatName}`;
+  }
+  const titles: Partial<Record<SumMode, string>> = {
+    hot: "🔥 群聊争议雷达", rank: "🏆 今日话唠榜", links: "🔗 链接资源整理", todo: "✅ 群聊待办清单",
+    catchup: "🧭 错过消息补课", vibe: "🎭 群聊小剧场", about: "🔎 关键词追踪", meme: "🧨 今日热梗榜",
+    relation: "🕸️ 人物关系网", story: "🎬 群聊剧情线", compare: "📈 昨日今日对比", track: "🛰️ 争议追踪",
+    quotes: "💬 金句收藏夹", melon: "🍉 今日吃瓜速报", roast: "😏 今日槽点日报", cp: "🍬 今日互动嗑糖榜",
+    abstract: "🌀 今日抽象指数", award: "🏆 群聊颁奖典礼", mood: "🌦️ 今日群聊天气", npc: "🧙 群友职业分配",
+  };
+  return `${titles[mode] || "📊 群聊消息摘要"}｜${chatName}`;
+}
+
+function replaceSummaryTitle(text: string, title: string): string {
+  const lines = text.trim().split(/\r?\n/);
+  const index = lines.findIndex((line) => line.trim() !== "");
+  if (index < 0) return title;
+  lines[index] = `# ${title}`;
+  return lines.join("\n");
+}
+
+function bar(score: number): string {
+  const value = Math.max(0, Math.min(100, Math.round(score)));
+  const filled = Math.max(0, Math.min(10, Math.round(value / 10)));
+  return `${"█".repeat(filled)}${"░".repeat(10 - filled)} ${value}/100`;
+}
+
+function buildChatWeatherPanel(records: ChatMessageRecord[]): string {
+  const count = records.length;
+  const users = new Set(records.map((record) => record.senderId || record.sender).filter(Boolean)).size;
+  const text = records.map((record) => record.content || "").join("\n");
+  const emojiCount = [...text].filter((char) => /[\u{1F300}-\u{1FAFF}]/u.test(char)).length;
+  const questionCount = (text.match(/[?？]/g) || []).length;
+  const disputeCount = (text.match(/争议|不对|不是|问题|错误|失败|修复|卡|崩|吵|骂|坑/g) || []).length;
+  const melonCount = (text.match(/瓜|笑|哈哈|草|离谱|抽象|绷|乐|名场面/g) || []).length;
+  const heat = Math.min(100, 25 + count * 0.55 + users * 4);
+  const fun = Math.min(100, 20 + emojiCount * 3 + melonCount * 8 + users * 2);
+  const dispute = Math.min(100, 10 + disputeCount * 10 + questionCount * 2);
+  const melon = Math.min(100, 15 + melonCount * 12 + emojiCount * 2);
+  const weather = heat >= 80 ? "热闹高能" : dispute >= 65 ? "局部有争议" : melon >= 65 ? "多云转吃瓜" : fun >= 60 ? "轻松有梗" : "平稳交流";
+  return [
+    "🌦 群聊天气",
+    `• 🌤 天气：${weather}`,
+    `• 🔥 热度：${bar(heat)}`,
+    `• 😄 欢乐值：${bar(fun)}`,
+    `• ⚔️ 争议指数：${bar(dispute)}`,
+    `• 🍉 吃瓜浓度：${bar(melon)}`,
+  ].join("\n");
+}
+
+function insertWeatherPanel(text: string, panel: string): string {
+  if (text.includes("🌦 群聊天气")) return text;
+  const lines = text.split(/\r?\n/);
+  const insertAt = lines.findIndex((line) => /^\s*#*\s*🏆\s*话唠榜/.test(line.trim()));
+  if (insertAt > 0) {
+    return `${lines.slice(0, insertAt).join("\n").trimEnd()}\n\n${panel}\n\n${lines.slice(insertAt).join("\n").trimStart()}`;
+  }
+  return `${text.trimEnd()}\n\n${panel}`;
+}
+
+function decorateSummaryOutput(text: string, params: {
+  mode: SumMode;
+  chatName: string;
+  records: ChatMessageRecord[];
+  specialTitle?: string;
+  includeWeather: boolean;
+}): string {
+  let result = replaceSummaryTitle(text, titleForSummaryMode(params.mode, params.chatName, params.specialTitle));
+  if (params.includeWeather) result = insertWeatherPanel(result, buildChatWeatherPanel(params.records));
+  return result;
+}
+
 function formatSummaryForTelegram(text: string, chatName: string, mentionLinks: SilentMentionLink[] = []): string {
   const withTitle = ensureHeadingHasChatName(text, chatName);
-  return formatMarkdownForTelegram(withTitle, mentionLinks);
+  return formatBlockquoteForTelegram(withTitle, mentionLinks);
+}
+
+function formatCardForTelegram(text: string, mentionLinks: SilentMentionLink[] = []): string {
+  return formatBlockquoteForTelegram(text, mentionLinks);
 }
 
 function buildSilentMentionLinks(records: ChatMessageRecord[]): SilentMentionLink[] {
@@ -166,7 +299,7 @@ function buildSilentMentionLinks(records: ChatMessageRecord[]): SilentMentionLin
       .replace(/\s+([（(])/g, "$1")
       .replace(/([）)])\s+/g, "$1")
       .trim();
-    return clean ? `＠${clean}` : "";
+    return clean ? `@${clean}` : "";
   };
 
   const add = (text: string, display: string, href: string, priority = 0) => {
@@ -205,12 +338,14 @@ function buildSilentMentionLinks(records: ChatMessageRecord[]): SilentMentionLin
 
   for (const record of records) {
     const username = record.username.replace(/^@/, "").trim();
+    const priority = (senderCounts.get(record.senderId) || 0) * 10;
+    const idHref = record.senderId ? `tg://user?id=${encodeURIComponent(record.senderId)}` : "";
+    if (idHref) addNameAliases(record, idHref, priority + 1);
     if (!username) continue;
     const href = `tg://resolve?domain=${encodeURIComponent(username)}`;
-    const priority = (senderCounts.get(record.senderId) || 0) * 10;
-    add(`@${username}`, `＠${username}`, href, priority + 3);
-    add(username, `＠${username}`, href, priority + 2);
-    addNameAliases(record, href, priority + 1);
+    add(`@${username}`, `@${username}`, href, priority + 4);
+    add(username, `@${username}`, href, priority + 3);
+    addNameAliases(record, href, priority + 2);
   }
 
   return [...links.values()]
@@ -303,6 +438,139 @@ function formatMarkdownForTelegram(text: string, mentionLinks: SilentMentionLink
     .replace(/\*\*([^*\n]+)\*\*/g, (_match, content) => `<b>${content.trim()}</b>`);
   return restoreMarkdownLinkAnchors(linkifySilentMentions(html, mentionLinks), extracted.anchors);
 }
+
+function splitProviderFooterText(text: string): { body: string; footer: string } {
+  const match = text.match(/\n---\n[\s\S]*$/);
+  if (!match || match.index === undefined) return { body: text, footer: "" };
+  return {
+    body: text.slice(0, match.index).trimEnd(),
+    footer: text.slice(match.index).trimStart(),
+  };
+}
+
+function formatBlockquoteForTelegram(text: string, _mentionLinks: SilentMentionLink[] = []): string {
+  return normalizeSummaryMentions(normalizeSummaryCardText(normalizeSummaryHeadings(text.trim())));
+}
+
+function isSummaryHeadingLine(line: string, index: number): boolean {
+  const trimmed = line.trim();
+  if (!trimmed) return false;
+  if (index === 0) return true;
+  if (/^[⏰🏆🔥✨💬✅🧭📊🌦]\s/.test(trimmed)) return true;
+  if (/^\d+[️⃣.]\s*/u.test(trimmed)) return true;
+  return false;
+}
+
+function mentionEntitiesForText(text: string, mentionLinks: SilentMentionLink[]): Api.TypeMessageEntity[] {
+  if (!text || !mentionLinks.length) return [];
+  const candidates: TextMatch[] = [];
+  for (const item of mentionLinks) {
+    const values = [item.display, item.text].filter(Boolean);
+    for (const value of values) {
+      for (const match of text.matchAll(mentionPattern(value))) {
+        let start = match.index ?? -1;
+        if (start < 0) continue;
+        let end = start + match[0].length;
+        if (start > 0 && (text[start - 1] === "@" || text[start - 1] === "＠")) start -= 1;
+        candidates.push({ start, end, link: item });
+      }
+    }
+  }
+  if (!candidates.length) return [];
+  candidates.sort((a, b) => a.start - b.start || (b.end - b.start) - (a.end - a.start));
+  const selected: TextMatch[] = [];
+  let cursor = 0;
+  for (const match of candidates) {
+    if (match.start < cursor) continue;
+    selected.push(match);
+    cursor = match.end;
+  }
+  return selected.map((match) => new Api.MessageEntityTextUrl({
+    offset: match.start,
+    length: match.end - match.start,
+    url: match.link.href,
+  }));
+}
+
+function blockquoteEntitiesForText(text: string, mentionLinks: SilentMentionLink[] = []): Api.TypeMessageEntity[] {
+  if (!text) return [];
+  const entities: Api.TypeMessageEntity[] = [
+    new Api.MessageEntityBlockquote({ offset: 0, length: text.length }),
+  ];
+  let offset = 0;
+  text.split(/\n/).forEach((line, index) => {
+    if (isSummaryHeadingLine(line, index)) {
+      const leading = line.match(/^\s*/)?.[0].length || 0;
+      const trailing = line.match(/\s*$/)?.[0].length || 0;
+      const length = line.length - leading - trailing;
+      if (length > 0) {
+        entities.push(new Api.MessageEntityBold({ offset: offset + leading, length }));
+      }
+    }
+    offset += line.length + 1;
+  });
+  entities.push(...mentionEntitiesForText(text, mentionLinks));
+  return entities;
+}
+
+async function sendFormattedSummaryMessage(
+  client: any,
+  chatId: string,
+  text: string,
+  quote: boolean,
+  mentionLinks: SilentMentionLink[] = [],
+): Promise<void> {
+  if (quote) {
+    await client.sendMessage(chatId, {
+      message: text,
+      formattingEntities: blockquoteEntitiesForText(text, mentionLinks),
+      linkPreview: false,
+    });
+    return;
+  }
+  await client.sendMessage(chatId, { message: text, parseMode: "html" });
+}
+
+async function editFormattedSummaryMessage(
+  msg: Api.Message,
+  text: string,
+  quote: boolean,
+  mentionLinks: SilentMentionLink[] = [],
+): Promise<void> {
+  if (quote) {
+    await msg.edit({
+      text,
+      formattingEntities: blockquoteEntitiesForText(text, mentionLinks),
+      linkPreview: false,
+    } as any);
+    return;
+  }
+  await msg.edit({ text, parseMode: "html" });
+}
+
+async function sendSummaryImageAlbum(
+  client: any,
+  chatId: string,
+  pages: Buffer[],
+  caption: string,
+): Promise<void> {
+  const files = pages.slice(0, 10).map((page, index) => {
+    const file = page as Buffer & { name?: string };
+    file.name = `sumplus-${Date.now()}-${index + 1}.png`;
+    return file;
+  });
+  if (!files.length) throw new Error("图片渲染结果为空");
+  if (files.length === 1) {
+    await client.sendFile(chatId, { file: files[0], caption, forceDocument: false });
+    return;
+  }
+  await client.sendFile(chatId, {
+    file: files,
+    caption: files.map((_file, index) => index === 0 ? caption : ""),
+    forceDocument: false,
+  });
+}
+
 
 function toInt(value: unknown, fallback: number): number {
   const n = Number(value);
@@ -554,9 +822,9 @@ function resolveRangeToken(rangeToken: string | undefined): {
 }
 
 function getSummaryDensity(durationMinutes: number | null, count: number): SummaryDensity {
-  const largeTopicLimit = count >= 1000 ? 6 : count >= 500 ? 5 : count >= 250 ? 4 : 3;
-  const largeTargetLength = count >= 1000 ? "1800-2600 中文字，必须完整收尾" : count >= 500 ? "1400-2000 中文字，必须完整收尾" : "900-1400 中文字";
-  const largeMaxOutputLength = count >= 1000 ? 4800 : count >= 500 ? 3800 : 2400;
+  const largeTopicLimit = count >= 1000 ? 5 : count >= 500 ? 4 : 3;
+  const largeTargetLength = count >= 1000 ? "1300-1800 中文字，必须完整收尾" : count >= 500 ? "900-1300 中文字，必须完整收尾" : "650-900 中文字";
+  const largeMaxOutputLength = count >= 1000 ? 2600 : count >= 500 ? 2000 : 1400;
 
   if (durationMinutes === null) {
     if (count <= 50) {
@@ -586,12 +854,12 @@ function getSummaryDensity(durationMinutes: number | null, count: number): Summa
     return {
       label: "标准",
       targetLength: "500-800 中文字",
-      topicLimit: count >= 250 ? 4 : 3,
+      topicLimit: 3,
       pointLimit: 2,
       highlightLimit: 3,
       quoteLimit: 2,
       todoLimit: 3,
-      maxOutputLength: count >= 250 ? 1900 : 1600,
+      maxOutputLength: count >= 250 ? 1500 : 1300,
     };
   }
 
@@ -622,13 +890,13 @@ function getSummaryDensity(durationMinutes: number | null, count: number): Summa
   if (durationMinutes < 360) {
     return {
       label: "标准",
-      targetLength: count >= 250 ? "700-1000 中文字" : "500-800 中文字",
-      topicLimit: count >= 250 ? 4 : 3,
+      targetLength: count >= 250 ? "550-850 中文字" : "450-700 中文字",
+      topicLimit: 3,
       pointLimit: 2,
       highlightLimit: 3,
       quoteLimit: 2,
       todoLimit: 3,
-      maxOutputLength: count >= 250 ? 1900 : 1600,
+      maxOutputLength: count >= 250 ? 1400 : 1200,
     };
   }
   return {
@@ -747,6 +1015,9 @@ function isSumSelfNoiseRecord(record: ChatMessageRecord): boolean {
 
   if (
     content === "⏳ 正在读取消息并生成摘要..." ||
+    content === "⏳ 正在读取消息并生成图片摘要..." ||
+    content === "🎨 正在获取头像并排版..." ||
+    content.startsWith("⚠️ 图片生成失败，已回退文字摘要") ||
     content.startsWith("❌ 摘要失败") ||
     content.startsWith("没有找到可总结的文本消息")
   ) {
@@ -1010,8 +1281,14 @@ function buildDebugText(params: {
 
 async function handleCommand(msg: Api.Message): Promise<void> {
   const raw = msg.message || "";
-  const parts = raw.trim().split(/\s+/);
-  const [, sub, ...args] = parts;
+  const rawParts = raw.trim().split(/\s+/);
+  const commandArgs = rawParts.slice(1);
+  const rawSub = String(commandArgs[0] || "").toLowerCase();
+  const imageMode = !MANAGEMENT_COMMANDS.has(rawSub) && commandArgs.some((item) => IMAGE_MODE_TOKENS.has(item.toLowerCase()));
+  const effectiveArgs = imageMode
+    ? commandArgs.filter((item) => !IMAGE_MODE_TOKENS.has(item.toLowerCase()))
+    : commandArgs;
+  const [sub, ...args] = effectiveArgs;
   const db = await getDB();
 
   try {
@@ -1183,7 +1460,7 @@ async function handleCommand(msg: Api.Message): Promise<void> {
     const range = resolveRangeToken(request.rangeToken);
     const chatId = String(msg.chatId);
 
-    await msg.edit({ text: "⏳ 正在读取消息并生成摘要..." });
+    await msg.edit({ text: imageMode ? "⏳ 正在读取消息并生成图片摘要..." : "⏳ 正在读取消息并生成摘要..." });
 
     const mode: SumMode = special?.mode || (request.target ? "person" : "summary");
     const isPersonAnalysis = mode === "person";
@@ -1299,7 +1576,7 @@ async function handleCommand(msg: Api.Message): Promise<void> {
         ? 1100
         : special
         ? Math.max(db.data.maxOutputLength || 0, 1800)
-        : Math.max(db.data.maxOutputLength || 0, density.maxOutputLength),
+        : Math.min(db.data.maxOutputLength || density.maxOutputLength, density.maxOutputLength),
     };
     const summaryResult = await summarize(summaryConfig, summaryInput);
     const rawContent = `${summaryResult.content}${providerFooter(summaryResult.provider, {
@@ -1310,28 +1587,64 @@ async function handleCommand(msg: Api.Message): Promise<void> {
       rangeLabel: effectiveRange.label,
     })}`;
     const mentionLinks = buildSilentMentionLinks(fetchResult.records);
-    const result = isPersonAnalysis
-      ? formatMarkdownForTelegram(rawContent, mentionLinks)
-      : special
-      ? formatMarkdownForTelegram(rawContent, mentionLinks)
-      : formatSummaryForTelegram(rawContent, chatName, mentionLinks);
+    const decoratedContent = decorateSummaryOutput(rawContent, {
+      mode,
+      chatName,
+      records: fetchResult.records,
+      specialTitle: special?.title,
+      includeWeather: mode === "summary",
+    });
+
+    if (imageMode) {
+      const client = await getGlobalClient();
+      if (!client) throw new Error("Telegram 客户端未初始化");
+      try {
+        await msg.edit({ text: "🎨 正在获取头像并排版..." });
+        const { renderSummaryImages } = await import("./sumplus.image");
+        const imageResult = await renderSummaryImages({
+          client,
+          chatName,
+          title: titleForSummaryMode(mode, chatName, special?.title),
+          mode,
+          summary: decoratedContent,
+          records: fetchResult.records,
+          providerName: summaryResult.provider.name,
+          model: summaryResult.provider.model,
+        });
+        const caption = [
+          `🖼️ ${titleForSummaryMode(mode, chatName, special?.title)}`,
+          `🤖 ${summaryResult.provider.name}｜${summaryResult.provider.model}`,
+          `📥 ${fetchResult.records.length} 条｜${imageResult.pages.length} 页`,
+          `⚡ 排版 ${imageResult.renderMs}ms｜真实头像 ${imageResult.avatarCount} 个`,
+        ].join("\n");
+        await sendSummaryImageAlbum(client, chatId, imageResult.pages, caption);
+        await msg.delete({ revoke: true });
+        return;
+      } catch (imageError: any) {
+        console.warn("[sumplus] image render failed, falling back to text:", imageError?.message || imageError);
+        await msg.edit({ text: "⚠️ 图片生成失败，已回退文字摘要..." });
+      }
+    }
+
+    const result = formatCardForTelegram(decoratedContent, mentionLinks);
+    const quoteResult = true;
 
     if (db.data.replyMode) {
       const client = await getGlobalClient();
       if (!client) throw new Error("Telegram 客户端未初始化");
       for (const part of withPartHeader(splitLongText(result))) {
-        await client.sendMessage(chatId, { message: part, parseMode: "html" });
+        await sendFormattedSummaryMessage(client, chatId, part, quoteResult, mentionLinks);
       }
       await msg.delete({ revoke: true });
       return;
     }
 
     const parts = withPartHeader(splitLongText(result));
-    await msg.edit({ text: parts[0], parseMode: "html" });
+    await editFormattedSummaryMessage(msg, parts[0], quoteResult, mentionLinks);
     const client = await getGlobalClient();
     if (!client) throw new Error("Telegram 客户端未初始化");
     for (const part of parts.slice(1)) {
-      await client.sendMessage(chatId, { message: part, parseMode: "html" });
+      await sendFormattedSummaryMessage(client, chatId, part, quoteResult, mentionLinks);
     }
   } catch (error: any) {
     const message = error?.response?.data?.error?.message || error?.message || String(error);
@@ -1339,51 +1652,53 @@ async function handleCommand(msg: Api.Message): Promise<void> {
   }
 }
 
-const menuText = `▎SumPlus 摘要菜单
+const menuText = `📚 <b>SumPlus 模式菜单</b>
 
-不用记命令，记住 <code>${mainPrefix}sum menu</code> 就行。
+🧭 <b>日常速览</b>
+<code>${mainPrefix}sum</code> / <code>${mainPrefix}sum 1h</code> - 普通摘要
+<code>${mainPrefix}sum day</code> - 📆 群聊日报
+<code>${mainPrefix}sum yesterday</code> - 📜 昨日群聊日报
+<code>${mainPrefix}sum week</code> - 🗓️ 群聊周报
+<code>${mainPrefix}sum catchup 8h</code> - 🧭 错过消息补课
 
-<b>日常补课</b>
-<code>${mainPrefix}sum</code> - 最近 100 条普通摘要
-<code>${mainPrefix}sum catchup 8h</code> - 像朋友一样补课
-<code>${mainPrefix}sum day</code> - 今天日报
-<code>${mainPrefix}sum yesterday</code> - 昨天日报
-<code>${mainPrefix}sum week</code> - 本周周报
+🍉 <b>好玩模式</b>
+<code>${mainPrefix}sum melon 24h</code> - 🍉 吃瓜速报
+<code>${mainPrefix}sum hot 6h</code> - 🔥 争议雷达
+<code>${mainPrefix}sum roast 24h</code> - 😏 今日槽点
+<code>${mainPrefix}sum vibe 12h</code> - 🎭 群聊小剧场
+<code>${mainPrefix}sum meme 24h</code> - 🧨 热梗榜
+<code>${mainPrefix}sum cp 24h</code> - 🍬 互动嗑糖榜
+<code>${mainPrefix}sum abstract 24h</code> - 🌀 抽象指数
+<code>${mainPrefix}sum award 24h</code> - 🏆 群聊颁奖
+<code>${mainPrefix}sum mood 24h</code> - 🌦️ 群聊天气
+<code>${mainPrefix}sum npc 24h</code> - 🧙 群友职业
 
-<b>好玩模式</b>
-<code>${mainPrefix}sum hot 6h</code> - 争议 / 吵架雷达
-<code>${mainPrefix}sum rank 24h</code> - 贡献榜 / 话唠榜
-<code>${mainPrefix}sum vibe 12h</code> - 群聊气氛小剧场
-<code>${mainPrefix}sum meme 24h</code> - 热梗榜 / 名场面
-<code>${mainPrefix}sum melon 24h</code> - 吃瓜速报
-<code>${mainPrefix}sum quotes 24h</code> - 金句收藏夹
-<code>${mainPrefix}sum roast 24h</code> - 温和吐槽 / 槽点日报
-<code>${mainPrefix}sum cp 24h</code> - CP / 互动嗑糖榜
-<code>${mainPrefix}sum abstract 24h</code> - 抽象指数报告
-<code>${mainPrefix}sum award 24h</code> - 群聊颁奖典礼
-<code>${mainPrefix}sum mood 24h</code> - 群聊情绪天气
-<code>${mainPrefix}sum npc 24h</code> - 群友 RPG 职业分配
-
-<b>实用整理</b>
-<code>${mainPrefix}sum links 24h</code> - 链接和资源整理
-<code>${mainPrefix}sum todo 12h</code> - 待办和未解决问题
-<code>${mainPrefix}sum about AI 24h</code> - 只看某个关键词
+🔎 <b>实用整理</b>
+<code>${mainPrefix}sum links 24h</code> - 🔗 链接资源
+<code>${mainPrefix}sum todo 12h</code> - ✅ 待办提取
+<code>${mainPrefix}sum about AI 24h</code> - 🔎 关键词追踪
 <code>${mainPrefix}sum about AI,Claude -Gemini 24h</code> - 多关键词 / 排除词
-<code>${mainPrefix}sum map 24h</code> - 人物关系网
-<code>${mainPrefix}sum story day</code> - 今日剧情线
-<code>${mainPrefix}sum compare day</code> - 今天 vs 昨天
-<code>${mainPrefix}sum track 24h</code> - 延续争议追踪
+<code>${mainPrefix}sum map 24h</code> - 🕸️ 人物关系网
+<code>${mainPrefix}sum story day</code> - 🎬 剧情线
+<code>${mainPrefix}sum compare day</code> - 📈 今天 vs 昨天
+<code>${mainPrefix}sum track 24h</code> - 🛰️ 延续争议
 
-<b>人物分析</b>
+👤 <b>人物分析</b>
 <code>${mainPrefix}sum 6h @username</code>
 <code>${mainPrefix}sum user 200 张三</code>
 
-<b>排错诊断</b>
-<code>${mainPrefix}sum debug 24h</code> - 查看抓取量 / 采样 / 线路
-<code>${mainPrefix}sum debug 12h @username</code> - 查看人物匹配条数
+🛠️ <b>排错诊断</b>
+<code>${mainPrefix}sum debug 24h</code> - 抓取量 / 采样 / 线路
+<code>${mainPrefix}sum debug 12h @username</code> - 人物匹配条数
 
-中文也能用：<code>热梗</code>、<code>吃瓜</code>、<code>吐槽</code>、<code>槽点</code>、<code>金句</code>、<code>关系</code>、<code>剧情</code>、<code>对比</code>、<code>追踪</code>、<code>嗑糖</code>、<code>抽象</code>、<code>颁奖</code>、<code>情绪</code>、<code>职业</code>。
-时间可以写：<code>30m</code>、<code>6h</code>、<code>24h</code>、<code>day</code>、<code>week</code>。`;
+🖼️ <b>图片模式</b>
+<code>${mainPrefix}sum day pic</code> - 日报图片
+<code>${mainPrefix}sum roast 24h pic</code> - 槽点图片
+任意摘要命令末尾加 <code>pic</code>，即可输出可转发图片。
+
+💡 <b>小提示</b>
+中文别名可用：<code>热梗</code>、<code>吃瓜</code>、<code>吐槽</code>、<code>金句</code>、<code>关系</code>、<code>剧情</code>、<code>对比</code>、<code>追踪</code>、<code>嗑糖</code>、<code>抽象</code>、<code>颁奖</code>、<code>情绪</code>、<code>职业</code>。
+时间可写：<code>30m</code>、<code>6h</code>、<code>24h</code>、<code>day</code>、<code>week</code>。`
 
 const helpText = `▎聊天摘要
 
@@ -1407,6 +1722,7 @@ const helpText = `▎聊天摘要
 <code>${mainPrefix}sum award 24h</code> - 群聊颁奖典礼
 <code>${mainPrefix}sum mood 24h</code> - 群聊情绪天气
 <code>${mainPrefix}sum npc 24h</code> - 群友 RPG 职业分配
+<code>${mainPrefix}sum day pic</code> - 图片版日报；其他模式同样可在末尾加 pic
 <code>${mainPrefix}sum debug 24h</code> - 只看抓取/采样/线路诊断，不调用模型
 
 长时间范围会自动分页抓取并按时间分段；人物分析会优先精确匹配 @用户名 / 用户ID / 昵称，并使用历史身份缓存辅助匹配。

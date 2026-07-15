@@ -17,6 +17,7 @@ fi
 mkdir -p "$TELEBOX_DIR/assets/sum"
 
 cp "$REPO_DIR/plugins/sumplus.ts" "$TELEBOX_DIR/plugins/sumplus.ts"
+cp "$REPO_DIR/plugins/sumplus.image.ts" "$TELEBOX_DIR/plugins/sumplus.image.ts"
 cp "$REPO_DIR/plugins/sumplus.prepare.ts" "$TELEBOX_DIR/plugins/sumplus.prepare.ts"
 cp "$REPO_DIR/plugins/sumplus.provider.ts" "$TELEBOX_DIR/plugins/sumplus.provider.ts"
 cp "$REPO_DIR/plugins/sumplus.prompts.ts" "$TELEBOX_DIR/plugins/sumplus.prompts.ts"
@@ -31,4 +32,3 @@ fi
 
 echo "SumPlus files installed into $TELEBOX_DIR"
 echo "Restart TeleBox after reviewing config: pm2 restart telebox --update-env"
-
